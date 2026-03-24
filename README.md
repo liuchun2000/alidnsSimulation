@@ -61,3 +61,8 @@ docker run -d \
 ```
   dig @127.0.0.1 dev.test.cog
   
+自签发证书 需换成der格式导入信任列表
+```
+openssl x509 -in /etc/nginx/conf.d/cert.pem -out cert.der -outform DER
+keytool -import -alias mycert -keystore $JAVA_HOME/jre/lib/security/cacerts -file cert.der
+```
