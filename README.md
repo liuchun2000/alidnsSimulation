@@ -1,7 +1,10 @@
 模拟阿里云dns管理服务，可使用alidns sdk管理域名。需连接数据库和etcd，coredns连接etcd
+```
 pip install fastapi uvicorn etcd3 sqlalchemy pymysql
+```
 可能需要protobuf降版本
 数据库schema dns_db
+```
 CREATE TABLE `aliyun_dns_record` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `record_id` VARCHAR(64) NOT NULL COMMENT '阿里云解析记录ID',
@@ -23,8 +26,8 @@ CREATE TABLE `aliyun_dns_record` (
   INDEX `idx_email_cluster` (`email`, `cluster_id`),
   INDEX `idx_sub_domain` (`sub_domain`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-
+```
+```
 Corefile文件
 . {
     etcd {
@@ -36,7 +39,8 @@ Corefile文件
     errors
     forward . 8.8.8.8 114.114.114.114
 }
-
+```
+```
 docker run -d \
   --name coredns \
   --restart always \
@@ -45,14 +49,15 @@ docker run -d \
   -v /opt/mysql/dnsconf/Corefile:/etc/coredns/Corefile \
   coredns/coredns:latest \
   -conf /etc/coredns/Corefile
-
+```
   验证请求
+  ```
   curl -X GET "http://127.0.0.1:8000/?Action=AddDomainRecord&DomainName=test.cog&RR=dev&Type=A&Value=1.2.3.4"
   curl -X GET "http://127.0.0.1:8000/?Action=DescribeSubDomainRecords&SubDomain=dev.test.cog"
   curl -X GET "http://127.0.0.1:8000/?Action=UpdateDomainRecord&RecordId=10832296992754&RR=dev&Value=5.6.7.8"
   curl -X GET "http://127.0.0.1:8000/?Action=SetDomainRecordStatus&RecordId=10832296992754&Status=Disable"
   curl -X GET "http://127.0.0.1:8000/?Action=SetDomainRecordStatus&RecordId=10832296992754&Status=Enable"
   curl -X GET "http://127.0.0.1:8000/?Action=DeleteSubDomainRecords&DomainName=test.cog&RR=dev"
-
+```
   dig @127.0.0.1 dev.test.cog
   
