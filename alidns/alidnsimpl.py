@@ -1,6 +1,10 @@
 import json
 import uuid
-from fastapi import FastAPI, Request, Query
+import base64
+import hmac
+import hashlib
+from urllib.parse import quote, unquote
+from fastapi import FastAPI, HTTPException, Request, Query
 from sqlalchemy import create_engine, Column, String, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -9,6 +13,40 @@ import etcd3
 # --- 配置 ---
 MYSQL_URL = "mysql+pymysql://root:root@127.0.0.1:33306/dns_db"
 ETCD_HOST = "localhost"
+EXPECTED_AK = "abc"
+EXPECTED_SK = "xyz"
+
+
+def aliyun_quote(s):
+    """阿里云要求的百分号编码规则"""
+    res = quote(str(s), safe='~')
+    return res.replace('+', '%20').replace('*', '%2A').replace('%7E', '~')
+
+
+def verify_signature(method: str, all_params: dict, secret: str):
+    """验证签名核心逻辑"""
+    if "Signature" not in all_params:
+        return False
+
+    # 1. 提取并移除 Signature
+    received_sig = unquote(all_params.pop("Signature"))
+
+    # 2. 参数按 Key 排序
+    sorted_keys = sorted(all_params.keys())
+
+    # 3. 构造规范化查询字符串
+    canonicalized_qs = "&".join([f"{aliyun_quote(k)}={aliyun_quote(all_params[k])}" for k in sorted_keys])
+
+    # 4. 构造待签名字符串 StringToSign
+    string_to_sign = f"{method.upper()}&{aliyun_quote('/')}&{aliyun_quote(canonicalized_qs)}"
+
+    # 5. 计算 HMAC-SHA1
+    key = (secret + "&").encode('utf-8')
+    h = hmac.new(key, string_to_sign.encode('utf-8'), hashlib.sha1)
+    computed_sig = base64.b64encode(h.digest()).decode('utf-8')
+
+    return computed_sig == received_sig
+
 
 # --- 数据库模型 ---
 Base = declarative_base()
@@ -57,14 +95,19 @@ app = FastAPI()
 
 @app.api_route("/", methods=["GET", "POST"])
 async def alidns_gateway(request: Request, Action: str = Query(...)):
-    db = SessionLocal()
     # 阿里云 SDK 参数可能在 Query 也可能在 Body，这里统一处理
     params = dict(request.query_params)
+    content_type = request.headers.get("Content-Type", "")
+    if request.method == "POST" and "application/x-www-form-urlencoded" in content_type:
+        form_data = await request.form()
+        params.update({k: v for k, v in form_data.items()})
+
+    if not verify_signature(request.method, params.copy(), EXPECTED_SK):
+        raise HTTPException(status_code=403, detail="SignatureDoesNotMatch")
+
+    Action = params.get("Action")
+    db = SessionLocal()
     request_id = str(uuid.uuid4()).upper()
-    form = await request.form()
-    # 将表单数据合并到 params（覆盖 query 中的同名参数）
-    for key, value in form.items():
-        params[key] = value
 
     try:
         # 1. AddDomainRecord (对应 SDK: addDomainRecord)
@@ -171,5 +214,4 @@ async def alidns_gateway(request: Request, Action: str = Query(...)):
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
